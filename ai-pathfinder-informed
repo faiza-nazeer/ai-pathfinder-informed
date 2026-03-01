@@ -1,0 +1,624 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import random
+import math
+import time
+from collections import deque
+
+class Node:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.obstacle = False
+        self.parent = None
+        self.g = float('inf')
+        self.h = 0
+        self.f = float('inf')
+
+class DynamicPathfinder:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("Dynamic Pathfinder")
+       
+        self.rows = 15
+        self.cols = 20
+        self.cell_size = 28
+        
+        # Colors
+        self.colors = {
+            'empty': 'white',
+            'obstacle': 'black',
+            'start': 'blue',
+            'goal': 'red',
+            'path': 'green',
+            'visited': 'light blue',
+            'frontier': 'yellow',
+            'expanding': 'orange',
+            'grid_line': 'gray'
+        }
+        
+        # Create grid
+        self.grid = [[Node(i, j) for j in range(self.cols)] for i in range(self.rows)]
+        
+        # Start and Goal
+        self.start = (0, 0)
+        self.goal = (self.rows-1, self.cols-1)
+        
+        # Algorithm settings
+        self.algorithm = tk.StringVar(value="A*")
+        self.heuristic = tk.StringVar(value="Manhattan")
+        self.dynamic_mode = tk.BooleanVar(value=False)
+        self.animation_speed = tk.DoubleVar(value=0.5)
+        
+        # Map generation settings
+        self.obstacle_density = tk.DoubleVar(value=0.3)  # Default 30%
+        
+        # Pathfinding results
+        self.path = []
+        self.visited = []
+        self.frontier = []
+        self.expanding_node = None
+        self.path_cost = 0
+        self.nodes_visited = 0
+        self.execution_time = 0
+        
+        # Exploration
+        self.exploration_active = False
+        self.exploration_id = None
+        self.search_frontier = []
+        self.search_visited = []
+        self.search_parents = {}
+        self.search_step_count = 0
+        self.start_time = 0
+        
+        
+        self.setup_gui()
+        
+        # Generate initial random map
+        self.generate_random_map()
+        
+    def setup_gui(self):
+        # Configure root window grid to be responsive
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        
+        # Main frame with padding
+        main_frame = ttk.Frame(self.root, padding="5")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1)
+        
+        # Left side - Grid frame
+        grid_container = ttk.Frame(main_frame)
+        grid_container.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.N, tk.S, tk.W, tk.E))
+        
+        # Create canvas with scrollbars for the grid
+        canvas_frame = ttk.Frame(grid_container)
+        canvas_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Add scrollbars
+        h_scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL)
+        v_scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL)
+        
+        # Create canvas for grid
+        canvas_width = self.cols * self.cell_size
+        canvas_height = self.rows * self.cell_size
+        
+        self.canvas = tk.Canvas(canvas_frame, width=min(600, canvas_width), 
+                               height=min(450, canvas_height), 
+                               bg='white', xscrollcommand=h_scrollbar.set, 
+                               yscrollcommand=v_scrollbar.set)
+        
+        # Configure scrollbars
+        h_scrollbar.config(command=self.canvas.xview)
+        v_scrollbar.config(command=self.canvas.yview)
+        
+        # Grid layout for canvas and scrollbars
+        self.canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        h_scrollbar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        v_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        
+        # Configure canvas frame grid
+        canvas_frame.grid_rowconfigure(0, weight=1)
+        canvas_frame.grid_columnconfigure(0, weight=1)
+        
+        # Set scroll region
+        self.canvas.config(scrollregion=(0, 0, canvas_width, canvas_height))
+        
+        # Bind mouse events
+        self.canvas.bind("<Button-1>", self.left_click)
+        self.canvas.bind("<Button-2>", self.middle_click)
+        self.canvas.bind("<Button-3>", self.right_click)
+        
+        # Add legend at bottom of grid container
+        legend_frame = ttk.Frame(grid_container)
+        legend_frame.grid(row=1, column=0, pady=5, sticky=(tk.W, tk.E))
+        
+        legend_items = [
+            ('blue', 'S-Start'),
+            ('red', 'G-Goal'),
+            ('black', 'Obs'),
+            ('yellow', 'Front'),
+            ('light blue', 'Visit'),
+            ('orange', 'Expand'),
+            ('green', 'Path')
+        ]
+        
+        for i, (color, text) in enumerate(legend_items):
+            ttk.Label(legend_frame, text=text, foreground=color, font=('Arial', 8, 'bold')).grid(row=0, column=i, padx=2)
+        
+        # Right side - Controls
+        control_frame = ttk.Frame(main_frame, padding="5", width=250)
+        control_frame.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.W, tk.E), padx=5)
+        control_frame.grid_propagate(False)  # Fixed width
+        
+        # Title
+        ttk.Label(control_frame, text="Pathfinder Controls", font=('Arial', 12, 'bold')).grid(row=0, column=0, columnspan=2, pady=5)
+        
+        # Algorithm selection
+        ttk.Label(control_frame, text="Algorithm:", font=('Arial', 9)).grid(row=1, column=0, sticky=tk.W, pady=2)
+        algo_combo = ttk.Combobox(control_frame, textvariable=self.algorithm, values=["A*", "GBFS"], state="readonly", width=15)
+        algo_combo.grid(row=1, column=1, pady=2, sticky=tk.W)
+        
+        # Heuristic selection
+        ttk.Label(control_frame, text="Heuristic:", font=('Arial', 9)).grid(row=2, column=0, sticky=tk.W, pady=2)
+        heur_combo = ttk.Combobox(control_frame, textvariable=self.heuristic, values=["Manhattan", "Euclidean"], state="readonly", width=15)
+        heur_combo.grid(row=2, column=1, pady=2, sticky=tk.W)
+        
+        # Animation speed
+        ttk.Label(control_frame, text="Speed:", font=('Arial', 9)).grid(row=3, column=0, sticky=tk.W, pady=2)
+        speed_frame = ttk.Frame(control_frame)
+        speed_frame.grid(row=3, column=1, pady=2, sticky=tk.W)
+        speed_scale = ttk.Scale(speed_frame, from_=0.1, to=1.0, variable=self.animation_speed, orient=tk.HORIZONTAL, length=100)
+        speed_scale.pack(side=tk.LEFT)
+        ttk.Label(speed_frame, textvariable=self.animation_speed, width=3).pack(side=tk.LEFT, padx=2)
+        
+        # Dynamic mode checkbox
+        ttk.Checkbutton(control_frame, text="Dynamic Mode", variable=self.dynamic_mode).grid(row=4, column=0, columnspan=2, pady=2, sticky=tk.W)
+        
+        # Map Generation Controls
+        map_frame = ttk.LabelFrame(control_frame, text="Map Generation", padding="3")
+        map_frame.grid(row=5, column=0, columnspan=2, pady=5, sticky=(tk.W, tk.E))
+        
+        # Obstacle density slider
+        ttk.Label(map_frame, text="Density:", font=('Arial', 8)).grid(row=0, column=0, sticky=tk.W, pady=1)
+        density_frame = ttk.Frame(map_frame)
+        density_frame.grid(row=0, column=1, pady=1, sticky=tk.W)
+        density_scale = ttk.Scale(density_frame, from_=0.0, to=0.6, variable=self.obstacle_density, orient=tk.HORIZONTAL, length=80)
+        density_scale.pack(side=tk.LEFT)
+        self.density_label = ttk.Label(density_frame, text="30%", width=3)
+        self.density_label.pack(side=tk.LEFT, padx=2)
+        
+        # Update density label when slider moves
+        def update_density_label(*args):
+            self.density_label.config(text=f"{int(self.obstacle_density.get() * 100)}%")
+        self.obstacle_density.trace('w', update_density_label)
+        
+        # Map generation buttons in a grid
+        map_buttons = [
+            ("Random", self.generate_random_map),
+            ("Maze", self.generate_maze),
+            ("Open", self.generate_open_field),
+            ("Walls", self.generate_walls)
+        ]
+        
+        for i, (text, command) in enumerate(map_buttons):
+            row = 1 + i // 2
+            col = i % 2
+            ttk.Button(map_frame, text=text, command=command, width=8).grid(row=row, column=col, padx=1, pady=1)
+        
+        # Main action buttons
+        action_frame = ttk.Frame(control_frame)
+        action_frame.grid(row=6, column=0, columnspan=2, pady=5)
+        
+        ttk.Button(action_frame, text="Start", command=self.start_exploration, width=8).grid(row=0, column=0, padx=1)
+        ttk.Button(action_frame, text="Stop", command=self.stop_exploration, width=8).grid(row=0, column=1, padx=1)
+        ttk.Button(action_frame, text="Reset", command=self.reset_grid, width=8).grid(row=0, column=2, padx=1)
+        
+        # Metrics display
+        ttk.Label(control_frame, text="Metrics", font=('Arial', 10, 'bold')).grid(row=7, column=0, columnspan=2, pady=(5,2))
+        
+        self.metrics_text = tk.Text(control_frame, width=22, height=6, state='disabled', font=('Arial', 8))
+        self.metrics_text.grid(row=8, column=0, columnspan=2, pady=2)
+        
+        # Quick instructions
+        instructions = """
+Click: L=Obstacle
+R=Start(S) M=Goal(G)
+        """
+        ttk.Label(control_frame, text=instructions, justify=tk.LEFT, font=('Arial', 8)).grid(row=9, column=0, columnspan=2, pady=5)
+        
+        # Draw initial grid
+        self.draw_grid()
+        
+        # Set window size and position
+        self.root.update_idletasks()
+        window_width = canvas_width + 280  # 280 for control panel
+        window_height = max(canvas_height + 80, 500)  # Ensure minimum height
+        self.root.geometry(f"{window_width}x{window_height}")
+        self.root.minsize(700, 450)
+        
+    def draw_grid(self):
+        """Draw the grid on canvas"""
+        self.canvas.delete("all")
+        
+        # Draw cells
+        for i in range(self.rows):
+            for j in range(self.cols):
+                x1 = j * self.cell_size
+                y1 = i * self.cell_size
+                x2 = x1 + self.cell_size
+                y2 = y1 + self.cell_size
+                
+                # Determine cell color
+                if (i, j) == self.start:
+                    color = self.colors['start']
+                elif (i, j) == self.goal:
+                    color = self.colors['goal']
+                elif self.grid[i][j].obstacle:
+                    color = self.colors['obstacle']
+                elif (i, j) in self.path:
+                    color = self.colors['path']
+                elif (i, j) == self.expanding_node:
+                    color = self.colors['expanding']
+                elif (i, j) in self.visited:
+                    color = self.colors['visited']
+                elif (i, j) in self.frontier:
+                    color = self.colors['frontier']
+                else:
+                    color = self.colors['empty']
+                
+                self.canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline=self.colors['grid_line'])
+                
+                # Add labels for Start and Goal
+                if (i, j) == self.start:
+                    self.canvas.create_text(x1 + self.cell_size//2, y1 + self.cell_size//2, 
+                                           text="S", fill="white", font=('Arial', 10, 'bold'))
+                elif (i, j) == self.goal:
+                    self.canvas.create_text(x1 + self.cell_size//2, y1 + self.cell_size//2, 
+                                           text="G", fill="white", font=('Arial', 10, 'bold'))
+        
+        self.update_metrics()
+        
+    def update_metrics(self):
+        """Update metrics display"""
+        self.metrics_text.config(state='normal')
+        self.metrics_text.delete(1.0, tk.END)
+        
+        # Calculate elapsed time if exploration is active
+        current_time = self.execution_time
+        if self.exploration_active and self.start_time > 0:
+            current_time = (time.time() - self.start_time) * 1000
+        
+        # Calculate actual obstacle density
+        total_cells = self.rows * self.cols
+        obstacle_count = sum(1 for i in range(self.rows) for j in range(self.cols) if self.grid[i][j].obstacle)
+        actual_density = (obstacle_count / total_cells) * 100
+        
+        metrics = f"""Algo: {self.algorithm.get()}
+Heur: {self.heuristic.get()}
+Visited: {self.nodes_visited}
+Frontier: {len(self.frontier)}
+Cost: {self.path_cost}
+Time: {current_time:.1f}ms
+Step: {self.search_step_count}
+Obs: {obstacle_count}({actual_density:.0f}%)"""
+        
+        self.metrics_text.insert(1.0, metrics)
+        self.metrics_text.config(state='disabled')
+        
+    def left_click(self, event):
+        """Left click - toggle obstacle"""
+        # Adjust for canvas scrolling
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        
+        j = int(x // self.cell_size)
+        i = int(y // self.cell_size)
+        
+        if 0 <= i < self.rows and 0 <= j < self.cols:
+            if (i, j) != self.start and (i, j) != self.goal:
+                self.grid[i][j].obstacle = not self.grid[i][j].obstacle
+                self.clear_path()
+                self.draw_grid()
+    
+    def right_click(self, event):
+        """Right click - set start"""
+        # Adjust for canvas scrolling
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        
+        j = int(x // self.cell_size)
+        i = int(y // self.cell_size)
+        
+        if 0 <= i < self.rows and 0 <= j < self.cols:
+            if not self.grid[i][j].obstacle:
+                self.start = (i, j)
+                self.clear_path()
+                self.draw_grid()
+    
+    def middle_click(self, event):
+        """Middle click - set goal"""
+        # Adjust for canvas scrolling
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        
+        j = int(x // self.cell_size)
+        i = int(y // self.cell_size)
+        
+        if 0 <= i < self.rows and 0 <= j < self.cols:
+            if not self.grid[i][j].obstacle:
+                self.goal = (i, j)
+                self.clear_path()
+                self.draw_grid()
+    
+    def generate_random_map(self):
+        """Generate random obstacles with user-defined density"""
+        density = self.obstacle_density.get()
+        for i in range(self.rows):
+            for j in range(self.cols):
+                if (i, j) != self.start and (i, j) != self.goal:
+                    self.grid[i][j].obstacle = random.random() < density
+        self.clear_path()
+        self.draw_grid()
+    
+    def generate_maze(self):
+        """Generate a simple maze pattern"""
+        self.reset_grid()
+        
+        # Create a simple maze pattern with walls
+        for i in range(self.rows):
+            for j in range(self.cols):
+                if (i, j) != self.start and (i, j) != self.goal:
+                    # Create a checkerboard-like pattern with some randomness
+                    if (i % 3 == 0 and j % 2 == 0) or (j % 3 == 0 and i % 2 == 0):
+                        if random.random() < 0.7:  # 70% chance to place wall
+                            self.grid[i][j].obstacle = True
+        
+        # Ensure start and goal are not blocked
+        self.grid[self.start[0]][self.start[1]].obstacle = False
+        self.grid[self.goal[0]][self.goal[1]].obstacle = False
+        
+        self.clear_path()
+        self.draw_grid()
+    
+    def generate_open_field(self):
+        """Clear all obstacles"""
+        for i in range(self.rows):
+            for j in range(self.cols):
+                self.grid[i][j].obstacle = False
+        self.clear_path()
+        self.draw_grid()
+    
+    def generate_walls(self):
+        """Generate vertical and horizontal walls"""
+        self.reset_grid()
+        
+        # Add some vertical walls
+        for wall_x in [5, 10, 15]:
+            for i in range(self.rows):
+                if (i, wall_x) != self.start and (i, wall_x) != self.goal:
+                    if random.random() < 0.8:  # 80% chance for wall segment
+                        self.grid[i][wall_x].obstacle = True
+        
+        # Add some horizontal walls
+        for wall_y in [4, 8, 12]:
+            for j in range(self.cols):
+                if (wall_y, j) != self.start and (wall_y, j) != self.goal:
+                    if random.random() < 0.8:  # 80% chance for wall segment
+                        self.grid[wall_y][j].obstacle = True
+        
+        # Ensure start and goal are not blocked
+        self.grid[self.start[0]][self.start[1]].obstacle = False
+        self.grid[self.goal[0]][self.goal[1]].obstacle = False
+        
+        self.clear_path()
+        self.draw_grid()
+    
+    def reset_grid(self):
+        """Remove all obstacles"""
+        for i in range(self.rows):
+            for j in range(self.cols):
+                self.grid[i][j].obstacle = False
+        self.clear_path()
+        self.draw_grid()
+    
+    def clear_path(self):
+        """Clear pathfinding results"""
+        self.path = []
+        self.visited = []
+        self.frontier = []
+        self.expanding_node = None
+        self.path_cost = 0
+        self.nodes_visited = 0
+        self.execution_time = 0
+        self.start_time = 0
+        self.stop_exploration()
+        self.draw_grid()
+    
+    def heuristic_func(self, a, b):
+        """Calculate heuristic"""
+        if self.heuristic.get() == "Manhattan":
+            return abs(a[0] - b[0]) + abs(a[1] - b[1])
+        else:  # Euclidean
+            return math.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
+    
+    def get_neighbors(self, pos):
+        """Get valid neighbors"""
+        x, y = pos
+        neighbors = []
+        for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < self.rows and 0 <= ny < self.cols:
+                if not self.grid[nx][ny].obstacle:
+                    neighbors.append((nx, ny))
+        return neighbors
+    
+    def start_exploration(self):
+        """Start step-by-step exploration"""
+        self.stop_exploration()
+        self.clear_path()
+        
+        # Reset node values
+        for i in range(self.rows):
+            for j in range(self.cols):
+                self.grid[i][j].parent = None
+                self.grid[i][j].g = float('inf')
+                self.grid[i][j].h = 0
+                self.grid[i][j].f = float('inf')
+        
+        # Initialize search state based on algorithm
+        algorithm = self.algorithm.get()
+        start = self.start
+        goal = self.goal
+        
+        if algorithm == "A*":
+            self.grid[start[0]][start[1]].g = 0
+            self.grid[start[0]][start[1]].h = self.heuristic_func(start, goal)
+            self.grid[start[0]][start[1]].f = self.grid[start[0]][start[1]].h
+            self.search_frontier = [(self.grid[start[0]][start[1]].f, start)]
+        else:  # GBFS
+            self.search_frontier = [(self.heuristic_func(start, goal), start)]
+        
+        self.search_frontier_set = {start}
+        self.search_visited = []
+        self.search_parents = {start: None}
+        self.search_step_count = 0
+        self.exploration_active = True
+        self.frontier = [start]
+        self.visited = []
+        self.expanding_node = None
+        
+        # Start timing
+        self.start_time = time.time()
+        self.execution_time = 0
+        
+        # Take first step
+        self.next_exploration_step()
+    
+    def next_exploration_step(self):
+        """Perform one step of exploration"""
+        if not self.exploration_active:
+            return
+        
+        algorithm = self.algorithm.get()
+        goal = self.goal
+        start = self.start
+        
+        # Clear previous expanding node
+        self.expanding_node = None
+        
+        if not self.search_frontier:
+            # Update final time
+            self.execution_time = (time.time() - self.start_time) * 1000
+            messagebox.showinfo("Exploration Complete", "No path found to goal!")
+            self.stop_exploration()
+            return
+        
+        # Sort frontier
+        self.search_frontier.sort()
+        priority, current = self.search_frontier.pop(0)
+        
+        # Remove from frontier set
+        if current in self.search_frontier_set:
+            self.search_frontier_set.remove(current)
+        
+        # Skip if already visited
+        if current in self.search_visited:
+            self.root.after(int(self.animation_speed.get() * 1000), self.next_exploration_step)
+            return
+        
+        # Mark as currently expanding
+        self.expanding_node = current
+        
+        # Add to visited
+        self.search_visited.append(current)
+        self.visited = self.search_visited.copy()
+        self.nodes_visited = len(self.visited)
+        
+        # Update frontier display
+        self.frontier = list(self.search_frontier_set)
+        
+        self.search_step_count += 1
+        
+        # Check if goal reached
+        if current == goal:
+            # Reconstruct path
+            path = []
+            while current != start:
+                path.append(current)
+                current = self.search_parents[current]
+            path.append(start)
+            path.reverse()
+            self.path = path
+            self.path_cost = len(path) - 1
+            
+            # Update final time
+            self.execution_time = (time.time() - self.start_time) * 1000
+            
+            self.exploration_active = False
+            messagebox.showinfo("Goal Found!", f"Path found in {self.search_step_count} steps!")
+            self.expanding_node = None
+            self.draw_grid()
+            return
+        
+        # Expand current node
+        for neighbor in self.get_neighbors(current):
+            if neighbor not in self.search_visited:
+                # Update parent
+                if neighbor not in self.search_parents:
+                    self.search_parents[neighbor] = current
+                
+                # Calculate priority based on algorithm
+                if algorithm == "A*":
+                    new_g = self.grid[current[0]][current[1]].g + 1
+                    if new_g < self.grid[neighbor[0]][neighbor[1]].g:
+                        self.grid[neighbor[0]][neighbor[1]].g = new_g
+                        self.grid[neighbor[0]][neighbor[1]].h = self.heuristic_func(neighbor, goal)
+                        f = new_g + self.grid[neighbor[0]][neighbor[1]].h
+                        
+                        if neighbor not in self.search_frontier_set:
+                            self.search_frontier.append((f, neighbor))
+                            self.search_frontier_set.add(neighbor)
+                else:  # GBFS
+                    if neighbor not in self.search_frontier_set:
+                        h = self.heuristic_func(neighbor, goal)
+                        self.search_frontier.append((h, neighbor))
+                        self.search_frontier_set.add(neighbor)
+        
+        # Update display
+        self.draw_grid()
+        
+        # Schedule next step
+        if self.exploration_active:
+            self.exploration_id = self.root.after(int(self.animation_speed.get() * 1000), self.next_exploration_step)
+    
+    def stop_exploration(self):
+        """Stop exploration and clear"""
+        self.exploration_active = False
+        if self.exploration_id:
+            self.root.after_cancel(self.exploration_id)
+            self.exploration_id = None
+        
+        # Update final time if exploration was active
+        if self.start_time > 0:
+            self.execution_time = (time.time() - self.start_time) * 1000
+        
+        self.path = []
+        self.visited = []
+        self.frontier = []
+        self.expanding_node = None
+        self.path_cost = 0
+        self.nodes_visited = 0
+        self.search_step_count = 0
+        self.start_time = 0
+        self.draw_grid()
+    
+    def run(self):
+        """Start the application"""
+        self.root.mainloop()
+
+# Run the application
+if __name__ == "__main__":
+    app = DynamicPathfinder()
+    app.run()
