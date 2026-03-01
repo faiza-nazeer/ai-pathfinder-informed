@@ -1,0 +1,270 @@
+class Node:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.obstacle = False
+        self.parent = None
+        self.g = float('inf')
+        self.h = 0
+        self.f = float('inf')
+
+class DynamicPathfinder:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("Dynamic Pathfinder")
+        self.root.geometry("1000x700")
+        
+        # Grid settings
+        self.rows = 15
+        self.cols = 20
+        self.cell_size = 30
+        
+        # Colors
+        self.colors = {
+            'empty': 'white',
+            'obstacle': 'black',
+            'start': 'blue',
+            'goal': 'red',
+            'path': 'green',
+            'visited': 'light blue',
+            'frontier': 'yellow',
+            'grid_line': 'gray'
+        }
+        
+        # Create grid
+        self.grid = [[Node(i, j) for j in range(self.cols)] for i in range(self.rows)]
+        
+        # Start and Goal
+        self.start = (0, 0)
+        self.goal = (self.rows-1, self.cols-1)
+        
+        # Algorithm settings
+        self.algorithm = tk.StringVar(value="A*")
+        self.heuristic = tk.StringVar(value="Manhattan")
+        self.dynamic_mode = tk.BooleanVar(value=False)
+        
+        # Pathfinding results
+        self.path = []
+        self.visited = []
+        self.frontier = []
+        self.path_cost = 0
+        self.nodes_visited = 0
+        self.execution_time = 0
+        
+        # Animation
+        self.agent_pos = None
+        self.agent_path = []
+        self.animating = False
+        self.animation_id = None
+        
+        # Create GUI
+        self.setup_gui()
+        
+        # Generate random map
+        self.generate_random_map()
+ def setup_gui(self):
+        # Main frame
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Left side - Grid
+        grid_frame = ttk.Frame(main_frame)
+        grid_frame.grid(row=0, column=0, padx=10)
+        
+        # Create canvas for grid
+        canvas_width = self.cols * self.cell_size
+        canvas_height = self.rows * self.cell_size
+        self.canvas = tk.Canvas(grid_frame, width=canvas_width, height=canvas_height, bg='white')
+        self.canvas.grid(row=0, column=0)
+        
+        # Bind mouse events
+        self.canvas.bind("<Button-1>", self.left_click)  # Left click
+        self.canvas.bind("<Button-2>", self.middle_click)  # Middle click
+        self.canvas.bind("<Button-3>", self.right_click)  # Right click
+        
+        # Right side - Controls
+        control_frame = ttk.Frame(main_frame, padding="10")
+        control_frame.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        
+        # Title
+        ttk.Label(control_frame, text="Pathfinder Controls", font=('Arial', 14, 'bold')).grid(row=0, column=0, columnspan=2, pady=10)
+        
+        # Algorithm selection
+        ttk.Label(control_frame, text="Algorithm:", font=('Arial', 11)).grid(row=1, column=0, sticky=tk.W, pady=5)
+        algo_combo = ttk.Combobox(control_frame, textvariable=self.algorithm, values=["A*", "GBFS"], state="readonly")
+        algo_combo.grid(row=1, column=1, pady=5)
+        
+        # Heuristic selection
+        ttk.Label(control_frame, text="Heuristic:", font=('Arial', 11)).grid(row=2, column=0, sticky=tk.W, pady=5)
+        heur_combo = ttk.Combobox(control_frame, textvariable=self.heuristic, values=["Manhattan", "Euclidean"], state="readonly")
+        heur_combo.grid(row=2, column=1, pady=5)
+        
+        # Dynamic mode checkbox
+        ttk.Checkbutton(control_frame, text="Dynamic Mode", variable=self.dynamic_mode).grid(row=3, column=0, columnspan=2, pady=10)
+        
+        # Buttons
+        buttons = [
+            ("Random Map", self.generate_random_map),
+            ("Find Path", self.start_search),
+            ("Clear Path", self.clear_path),
+            ("Reset Grid", self.reset_grid),
+            ("Start Animation", self.start_animation),
+            ("Stop Animation", self.stop_animation)
+        ]
+        
+        for i, (text, command) in enumerate(buttons):
+            ttk.Button(control_frame, text=text, command=command).grid(row=4+i, column=0, columnspan=2, pady=5, sticky=(tk.W, tk.E))
+        
+        # Metrics display
+        ttk.Label(control_frame, text="Metrics", font=('Arial', 12, 'bold')).grid(row=10, column=0, columnspan=2, pady=(20,10))
+        
+        self.metrics_text = tk.Text(control_frame, width=25, height=8, state='disabled')
+        self.metrics_text.grid(row=11, column=0, columnspan=2, pady=5)
+        
+        # Instructions
+        instructions = """
+Instructions:
+• Left Click: Add obstacle
+• Right Click: Set Start
+• Middle Click: Set Goal
+• Dynamic Mode: Obstacles appear randomly
+        """
+        ttk.Label(control_frame, text=instructions, justify=tk.LEFT).grid(row=12, column=0, columnspan=2, pady=20)
+        
+        # Draw initial grid
+        self.draw_grid()
+        
+    def draw_grid(self):
+        """Draw the grid on canvas"""
+        self.canvas.delete("all")
+        
+        # Draw cells
+        for i in range(self.rows):
+            for j in range(self.cols):
+                x1 = j * self.cell_size
+                y1 = i * self.cell_size
+                x2 = x1 + self.cell_size
+                y2 = y1 + self.cell_size
+                
+                # Determine cell color
+                if (i, j) == self.start:
+                    color = self.colors['start']
+                elif (i, j) == self.goal:
+                    color = self.colors['goal']
+                elif self.grid[i][j].obstacle:
+                    color = self.colors['obstacle']
+                elif (i, j) in self.path:
+                    color = self.colors['path']
+                elif (i, j) in self.visited:
+                    color = self.colors['visited']
+                elif (i, j) in self.frontier:
+                    color = self.colors['frontier']
+                else:
+                    color = self.colors['empty']
+                
+                self.canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline=self.colors['grid_line'])
+        
+        # Draw agent if animating
+        if self.animating and self.agent_pos:
+            i, j = self.agent_pos
+            x1 = j * self.cell_size + 5
+            y1 = i * self.cell_size + 5
+            x2 = x1 + self.cell_size - 10
+            y2 = y1 + self.cell_size - 10
+            self.canvas.create_oval(x1, y1, x2, y2, fill='purple', outline='black', width=2)
+        
+        self.update_metrics()
+        
+    def update_metrics(self):
+        """Update metrics display"""
+        self.metrics_text.config(state='normal')
+        self.metrics_text.delete(1.0, tk.END)
+        
+        metrics = f"""Algorithm: {self.algorithm.get()}
+Heuristic: {self.heuristic.get()}
+Nodes Visited: {self.nodes_visited}
+Path Cost: {self.path_cost}
+Time: {self.execution_time:.2f} ms
+Dynamic: {'ON' if self.dynamic_mode.get() else 'OFF'}"""
+        
+        self.metrics_text.insert(1.0, metrics)
+        self.metrics_text.config(state='disabled')
+        
+    def left_click(self, event):
+        """Left click - toggle obstacle"""
+        j = event.x // self.cell_size
+        i = event.y // self.cell_size
+        
+        if 0 <= i < self.rows and 0 <= j < self.cols:
+            if (i, j) != self.start and (i, j) != self.goal:
+                self.grid[i][j].obstacle = not self.grid[i][j].obstacle
+                self.clear_path()
+                self.draw_grid()
+       def right_click(self, event):
+        """Right click - set start"""
+        j = event.x // self.cell_size
+        i = event.y // self.cell_size
+        
+        if 0 <= i < self.rows and 0 <= j < self.cols:
+            if not self.grid[i][j].obstacle:
+                self.start = (i, j)
+                self.clear_path()
+                self.draw_grid()
+    
+    def middle_click(self, event):
+        """Middle click - set goal"""
+        j = event.x // self.cell_size
+        i = event.y // self.cell_size
+        
+        if 0 <= i < self.rows and 0 <= j < self.cols:
+            if not self.grid[i][j].obstacle:
+                self.goal = (i, j)
+                self.clear_path()
+                self.draw_grid()
+    
+    def generate_random_map(self):
+        """Generate random obstacles"""
+        density = 0.3
+        for i in range(self.rows):
+            for j in range(self.cols):
+                if (i, j) != self.start and (i, j) != self.goal:
+                    self.grid[i][j].obstacle = random.random() < density
+        self.clear_path()
+        self.draw_grid()
+    
+    def reset_grid(self):
+        """Remove all obstacles"""
+        for i in range(self.rows):
+            for j in range(self.cols):
+                self.grid[i][j].obstacle = False
+        self.clear_path()
+        self.draw_grid()
+    
+    def clear_path(self):
+        """Clear pathfinding results"""
+        self.path = []
+        self.visited = []
+        self.frontier = []
+        self.path_cost = 0
+        self.nodes_visited = 0
+        self.execution_time = 0
+        self.stop_animation()
+        self.draw_grid()
+    
+    def heuristic_func(self, a, b):
+        """Calculate heuristic"""
+        if self.heuristic.get() == "Manhattan":
+            return abs(a[0] - b[0]) + abs(a[1] - b[1])
+        else:  # Euclidean
+            return math.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
+    
+    def get_neighbors(self, pos):
+        """Get valid neighbors"""
+        x, y = pos
+        neighbors = []
+        for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < self.rows and 0 <= ny < self.cols:
+                if not self.grid[nx][ny].obstacle:
+                    neighbors.append((nx, ny))
+        return neighbors
